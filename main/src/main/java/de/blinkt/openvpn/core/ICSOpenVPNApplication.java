@@ -34,8 +34,8 @@ public class ICSOpenVPNApplication extends Application {
         mStatus = new StatusListener();
         mStatus.init(getApplicationContext());
 
-        if (BuildConfig.BUILD_TYPE.equals("debug"))
-            enableStrictModes();
+//        if (BuildConfig.BUILD_TYPE.equals("debug"))
+//            enableStrictModes();
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             AppRestrictions.getInstance(this).checkRestrictions(this);

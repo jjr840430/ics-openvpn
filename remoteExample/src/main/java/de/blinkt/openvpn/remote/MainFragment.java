@@ -5,12 +5,16 @@
 
 package de.blinkt.openvpn.remote;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.Fragment;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.ServiceConnection;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
@@ -23,6 +27,7 @@ import android.widget.Button;
 import android.widget.TextView;
 
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -38,10 +43,15 @@ import de.blinkt.openvpn.api.IOpenVPNStatusCallback;
 
 public class MainFragment extends Fragment implements View.OnClickListener, Handler.Callback {
 
+    private static final int REQUEST_CODE_PERMISSION = 1001;
+    private static final int REQUEST_CODE_SELECT_FILE = 1002;
+
     private TextView mHelloWorld;
     private Button mStartVpn;
     private TextView mMyIp;
     private TextView mStatus;
+
+    private boolean isAppendingLog = false;
 
     @Override
     public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -94,6 +104,8 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
                 mService.addNewVPNProfile("nonEditable", false, config);
             else
                 mService.startVPN(config);
+            mStatus.setText("");
+            isAppendingLog = true;
         } catch (IOException | RemoteException e) {
             e.printStackTrace();
         }
@@ -186,6 +198,8 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
                 all +="\n And some profiles....";
 
             if(list.size()> 0) {
+                mHelloWorld.setVisibility(View.VISIBLE);
+
                 Button b= mStartVpn;
                 b.setOnClickListener(this);
                 b.setVisibility(View.VISIBLE);
@@ -214,6 +228,19 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
     }
 
     @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        switch (requestCode) {
+            case REQUEST_CODE_PERMISSION:
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                    selectConfigFile();
+                }
+                break;
+        }
+    }
+
+    @Override
     public void onClick(View v) {
         switch (v.getId()) {
             case R.id.startVPN:
@@ -226,6 +253,7 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
             case R.id.disconnect:
                 try {
                     mService.disconnect();
+                    isAppendingLog = false;
                 } catch (RemoteException e) {
                     // TODO Auto-generated catch block
                     e.printStackTrace();
@@ -261,11 +289,11 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
                 break;
 
             case R.id.addNewProfile:
-                try {
-                    prepareStartProfile(PROFILE_ADD_NEW);
-                } catch (RemoteException e) {
-                    // TODO Auto-generated catch block
-                    e.printStackTrace();
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M &&
+                        getActivity().checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    requestPermissions(new String[]{Manifest.permission.READ_EXTERNAL_STORAGE}, REQUEST_CODE_PERMISSION);
+                } else {
+                    selectConfigFile();
                 }
             default:
                 break;
@@ -290,6 +318,8 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
             if(requestCode==START_PROFILE_BYUUID)
                 try {
                     mService.startProfile(mStartUUID);
+                    mStatus.setText("");
+                    isAppendingLog = true;
                 } catch (RemoteException e) {
                     e.printStackTrace();
                 }
@@ -302,8 +332,10 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
                 }
 
             }
-            if (requestCode == PROFILE_ADD_NEW) {
-                startEmbeddedProfile(true);
+            if (requestCode == REQUEST_CODE_SELECT_FILE) {
+                if (data != null) {
+                    addNewVpnProfile(data.getData());
+                }
             }
         }
     };
@@ -334,11 +366,45 @@ public class MainFragment extends Fragment implements View.OnClickListener, Hand
     @Override
     public boolean handleMessage(Message msg) {
         if(msg.what == MSG_UPDATE_STATE) {
-            mStatus.setText((CharSequence) msg.obj);
+            if (isAppendingLog) {
+                mStatus.append("\n" + msg.obj);
+            } else {
+                mStatus.setText((CharSequence) msg.obj);
+            }
         } else if (msg.what == MSG_UPDATE_MYIP) {
 
             mMyIp.setText((CharSequence) msg.obj);
         }
         return true;
     }
+
+    private void selectConfigFile() {
+        Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
+        intent.setType("*/*");
+        intent.addCategory(Intent.CATEGORY_OPENABLE);
+        intent = Intent.createChooser(intent, "Select a config file.");
+        startActivityForResult(intent, REQUEST_CODE_SELECT_FILE);
+    }
+
+    private void addNewVpnProfile(Uri fileUri) {
+        try {
+            InputStream inputStream = getActivity().getContentResolver().openInputStream(fileUri);
+            InputStreamReader inputStreamReader = new InputStreamReader(inputStream);
+            BufferedReader bufferedReader = new BufferedReader(inputStreamReader);
+            StringBuilder config = new StringBuilder();
+            String line;
+            while (true) {
+                line = bufferedReader.readLine();
+                if(line == null)
+                    break;
+                config.append(line).append("\n");
+            }
+            bufferedReader.readLine();
+
+            mService.addNewVPNProfile(new File(fileUri.getPath()).getName(), false, config.toString());
+        } catch (IOException | RemoteException e) {
+            e.printStackTrace();
+        }
+    }
+
 }
